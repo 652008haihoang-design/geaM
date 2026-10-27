@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Game Bắn Súng 3D Đơn Giản</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+            user-select: none;
+        }
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+        }
+        /* Tâm ngắm (Crosshair) */
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 10px;
+            height: 10px;
+            background-color: rgba(255, 255, 255, 0.8);
+            border: 2px solid #000;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+        }
+        /* Bảng điểm & Hướng dẫn */
+        #hud {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: #ffffff;
+            font-size: 20px;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px #000000;
+            pointer-events: none;
+        }
+        #instructions {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            color: #ffffff;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            z-index: 10;
+        }
+        #instructions h1 {
+            font-size: 40px;
+            margin-bottom: 10px;
+        }
+        #instructions p {
+            font-size: 18px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+    <div id="crosshair"></div>
+    <div id="hud">Điểm: <span id="score">0</span></div>
+
+    <div id="instructions">
+        <h1>BẮT ĐẦU CHƠI</h1>
+        <p>Bấm vào đây để bắt đầu</p>
+        <p><strong>Di chuyển:</strong> W, A, S, D | <strong>Bắn:</strong> Chuột trái | <strong>Xoay góc nhìn:</strong> Di chuột</p>
+    </div>
+
+    <!-- Thư viện Three.js và PointerLockControls -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/PointerLockControls.js"></script>
+
+    <script>
+        let scene, camera, renderer, controls;
+        let bullets = [];
+        let targets = [];
+        let score = 0;
+
+        // Trạng thái di chuyển
+        let moveForward = false;
+        let moveBackward = false;
+        let moveLeft = false;
+        let moveRight = false;
+        let prevTime = performance.now();
+        const velocity = new THREE.Vector3();
+        const direction = new THREE.Vector3();
+
+        const instructions = document.getElementById('instructions');
+        const scoreElement = document.getElementById('score');
+
+        init();
+        animate();
+
+        function init() {
+            // 1. Tạo Khung cảnh (Scene) & Máy ảnh (Camera)
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87ceeb); // Màu trời
+            scene.fog = new THREE.Fog(0x87ceeb, 0, 750);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 1000);
+            camera.position.y = 10;
+
+            // 2. Ánh sáng
+            const light = new THREE.HemisphereLight(0xffffff, 0x444444, 1);
+            light.position.set(0, 200, 0);
+            scene.add(light);
+
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            dirLight.position.set(100, 100, 50);
+            scene.add(dirLight);
+
+            // 3. Điều khiển góc nhìn (Pointer Lock)
+            controls = new THREE.PointerLockControls(camera, document.body);
+
+            instructions.addEventListener('click', () => {
+                controls.lock();
+            });
+
+            controls.addEventListener('lock', () => {
+                instructions.style.display = 'none';
+            });
+
+            controls.addEventListener('unlock', () => {
+                instructions.style.display = 'flex';
+            });
+
+            scene.add(controls.getObject());
+
+            // 4. Bắt sự kiện phím & chuột
+            document.addEventListener('keydown', onKeyDown);
+            document.addEventListener('keyup', onKeyUp);
+            document.addEventListener('mousedown', onMouseDown);
+
+            // 5. Mặt đất (Sàn đấu)
+            const floorGeometry = new THREE.PlaneGeometry(2000, 2000, 100, 100);
+            floorGeometry.rotateX(- Math.PI / 2);
+            const floorMaterial = new THREE.MeshBasicMaterial({ color: 0x228b22, wireframe: false });
+            const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+            scene.add(floor);
+
+            // 6. Tạo mục tiêu ban đầu
+            for (let i = 0; i < 15; i++) {
+                createTarget();
+            }
+
+            // 7. Render
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        // Tạo mục tiêu (Hình hộp màu đỏ)
+        function createTarget() {
+            const geometry = new THREE.BoxGeometry(10, 10, 10);
+            const material = new THREE.MeshPhongMaterial({ color: 0xff0000 });
+            const target = new THREE.Mesh(geometry, material);
+
+            target.position.x = (Math.random() - 0.5) * 500;
+            target.position.y = 5 + Math.random() * 20;
+            target.position.z = (Math.random() - 0.5) * 500;
+
+            scene.add(target);
+            targets.push(target);
+        }
+
+        // Bắn đạn
+        function onMouseDown(event) {
+            if (!controls.isLocked) return;
+
+            if (event.button === 0) { // Chuột trái
+                const bulletGeometry = new THREE.SphereGeometry(1, 8, 8);
+                const bulletMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+                const bullet = new THREE.Mesh(bulletGeometry, bulletMaterial);
+
+                // Đặt vị trí đạn tại vị trí người chơi
+                bullet.position.copy(controls.getObject().position);
+
+                // Lấy hướng nhìn của camera
+                const vector = new THREE.Vector3(0, 0, -1);
+                vector.applyQuaternion(camera.quaternion);
+                bullet.velocity = vector.multiplyScalar(400); // Tốc độ đạn
+
+                scene.add(bullet);
+                bullets.push(bullet);
+            }
+        }
+
+        function onKeyDown(event) {
+            switch (event.code) {
+                case 'KeyW': moveForward = true; break;
+                case 'KeyA': moveLeft = true; break;
+                case 'KeyS': moveBackward = true; break;
+                case 'KeyD': moveRight = true; break;
+            }
+        }
+
+        function onKeyUp(event) {
+            switch (event.code) {
+                case 'KeyW': moveForward = false; break;
+                case 'KeyA': moveLeft = false; break;
+                case 'KeyS': moveBackward = false; break;
+                case 'KeyD': moveRight = false; break;
+            }
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // Vòng lặp cập nhật chuyển động & xử lý va chạm
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const time = performance.now();
+            const delta = (time - prevTime) / 1000;
+
+            if (controls.isLocked) {
+                // Xử lý di chuyển
+                velocity.x -= velocity.x * 10.0 * delta;
+                velocity.z -= velocity.z * 10.0 * delta;
+
+                direction.z = Number(moveForward) - Number(moveBackward);
+                direction.x = Number(moveRight) - Number(moveLeft);
+                direction.normalize();
+
+                if (moveForward || moveBackward) velocity.z -= direction.z * 400.0 * delta;
+                if (moveLeft || moveRight) velocity.x -= direction.x * 400.0 * delta;
+
+                controls.moveRight(-velocity.x * delta);
+                controls.moveForward(-velocity.z * delta);
+
+                // Cập nhật vị trí đạn
+                for (let i = bullets.length - 1; i >= 0; i--) {
+                    const b = bullets[i];
+                    b.position.addScaledVector(b.velocity, delta);
+
+                    // Xử lý va chạm giữa đạn và mục tiêu
+                    for (let j = targets.length - 1; j >= 0; j--) {
+                        const t = targets[j];
+                        if (b.position.distanceTo(t.position) < 6) {
+                            // Xóa đạn và mục tiêu khi trúng
+                            scene.remove(b);
+                            scene.remove(t);
+                            bullets.splice(i, 1);
+                            targets.splice(j, 1);
+
+                            // Cộng điểm & tạo mục tiêu mới
+                            score += 10;
+                            scoreElement.textContent = score;
+                            createTarget();
+                            break;
+                        }
+                    }
+
+                    // Xóa đạn nếu đi quá xa
+                    if (b.position.length() > 1000) {
+                        scene.remove(b);
+                        bullets.splice(i, 1);
+                    }
+                }
+            }
+
+            prevTime = time;
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>
